@@ -1,4 +1,4 @@
-# BNO05 ROS2 Package 
+# A BNO05 ROS2 Package 
 
 ## Description
 A ROS2 driver for the sensor IMU Bosch BNO055.
