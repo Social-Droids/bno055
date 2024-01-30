@@ -36,6 +36,7 @@ from bno055.connectors.Connector import Connector
 from bno055.params.NodeParameters import NodeParameters
 
 from geometry_msgs.msg import Quaternion, Vector3
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
 from sensor_msgs.msg import Imu, MagneticField, Temperature
@@ -51,8 +52,18 @@ class SensorService:
         self.con = connector
         self.param = param
 
+        self.previous_time = self.get_clock().now()
+
         prefix = self.param.ros_topic_prefix.value
         QoSProf = QoSProfile(depth=10)
+
+        self.position_x = 0
+        self.position_y = 0
+        self.position_z = 0
+
+        self.velocity_x = 0
+        self.velocity_y = 0
+        self.velocity_z = 0
 
         # create topic publishers:
         self.pub_imu_raw = node.create_publisher(Imu, prefix + 'imu_raw', QoSProf)
@@ -61,6 +72,7 @@ class SensorService:
         self.pub_grav = node.create_publisher(Vector3, prefix + 'grav', QoSProf)
         self.pub_temp = node.create_publisher(Temperature, prefix + 'temp', QoSProf)
         self.pub_calib_status = node.create_publisher(String, prefix + 'calib_status', QoSProf)
+        self.pub_odom_imu = node.create_publisher(Odometry, prefix + 'odometry_imu', QoSProf)
         self.srv = self.node.create_service(Trigger, prefix + 'calibration_request', self.calibration_request_callback)
 
     def configure(self):
@@ -145,6 +157,7 @@ class SensorService:
         mag_msg = MagneticField()
         grav_msg = Vector3()
         temp_msg = Temperature()
+        odometry_imu = Odometry()
 
         # read from sensor
         buf = self.con.receive(registers.BNO055_ACCEL_DATA_X_LSB_ADDR, 45)
@@ -200,8 +213,8 @@ class SensorService:
         # TODO(flynneva): replace with standard normalize() function
         # normalize
         norm = sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w)
-        imu_msg.orientation.x = q.x / norm
-        imu_msg.orientation.y = q.y / norm
+        imu_msg.orientation.x = 0.0 if abs(q.x / norm) < 3e-2 else q.x / norm
+        imu_msg.orientation.y = 0.0 if abs(q.y / norm) < 3e-2 else  q.y / norm
         imu_msg.orientation.z = q.z / norm
         imu_msg.orientation.w = q.w / norm
 
@@ -254,6 +267,40 @@ class SensorService:
         # temp_msg.header.seq = seq
         temp_msg.temperature = float(buf[44])
         self.pub_temp.publish(temp_msg)
+
+        # Publish odom data
+        odometry_imu.header.stamp = self.node.get_clock().now().to_msg()
+        odometry_imu.header.frame_id = 'odom'
+        odometry_imu.child_frame_id = 'base_footprint'
+        odometry_imu.pose.pose.orientation = Quaternion(x = q.x / norm, y = q.y / norm, z = q.z / norm, w = q.w / norm)
+        odometry_imu.twist.twist.angular.x = \
+            self.unpackBytesToFloat(buf[12], buf[13]) / self.param.gyr_factor.value
+        odometry_imu.twist.twist.angular.y = \
+            self.unpackBytesToFloat(buf[14], buf[15]) / self.param.gyr_factor.value
+        odometry_imu.twist.twist.angular.z = \
+            self.unpackBytesToFloat(buf[16], buf[17]) / self.param.gyr_factor.value
+        vector_position, linear_velocity = self.calc_pos_vel_linear(buf)
+        odometry_imu.twist.twist.linear = linear_velocity
+        odometry_imu.pose.pose.position = vector_position
+        self.pub_odom_imu(odometry_imu)
+
+    def calc_pos_vel_linear(self, buf):
+        current_time = self.get_clock().now()
+        delta_time = (current_time - self.previous_time).nanoseconds * 1e-9
+        self.previous_time = current_time
+
+        self.velocity_x += (self.unpackBytesToFloat(buf[32], buf[33]) / self.param.acc_factor.value) * delta_time
+        self.velocity_y += (self.unpackBytesToFloat(buf[34], buf[35]) / self.param.acc_factor.value) * delta_time
+        self.velocity_z += (self.unpackBytesToFloat(buf[36], buf[37]) / self.param.acc_factor.value) * delta_time
+
+        self.position_x += self.velocity_x * delta_time + 0.5*(self.unpackBytesToFloat(buf[32], buf[33]) / self.param.acc_factor.value) * delta_time * delta_time
+        self.position_y += self.velocity_y * delta_time + 0.5*(self.unpackBytesToFloat(buf[34], buf[35]) / self.param.acc_factor.value) * delta_time * delta_time
+        self.position_z += self.velocity_z * delta_time + 0.5*(self.unpackBytesToFloat(buf[36], buf[37]) / self.param.acc_factor.value) * delta_time * delta_time
+
+        vector_position = Vector3(self.position_x, self.position_y, self.position_z)
+        linear_velocity = Vector3(self.velocity_x, self.velocity_y, self.velocity_z)
+
+        return vector_position, linear_velocity
 
     def get_calib_status(self):
         """
