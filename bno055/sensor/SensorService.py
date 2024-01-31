@@ -35,7 +35,7 @@ from bno055 import registers
 from bno055.connectors.Connector import Connector
 from bno055.params.NodeParameters import NodeParameters
 
-from geometry_msgs.msg import Quaternion, Vector3
+from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
@@ -52,18 +52,18 @@ class SensorService:
         self.con = connector
         self.param = param
 
-        self.previous_time = self.get_clock().now()
+        self.previous_time = self.node.get_clock().now()
 
         prefix = self.param.ros_topic_prefix.value
         QoSProf = QoSProfile(depth=10)
 
-        self.position_x = 0
-        self.position_y = 0
-        self.position_z = 0
+        self.position_x = 0.0
+        self.position_y = 0.0
+        self.position_z = 0.0
 
-        self.velocity_x = 0
-        self.velocity_y = 0
-        self.velocity_z = 0
+        self.velocity_x = 0.0
+        self.velocity_y = 0.0
+        self.velocity_z = 0.0
 
         # create topic publishers:
         self.pub_imu_raw = node.create_publisher(Imu, prefix + 'imu_raw', QoSProf)
@@ -282,10 +282,10 @@ class SensorService:
         vector_position, linear_velocity = self.calc_pos_vel_linear(buf)
         odometry_imu.twist.twist.linear = linear_velocity
         odometry_imu.pose.pose.position = vector_position
-        self.pub_odom_imu(odometry_imu)
+        self.pub_odom_imu.publish(odometry_imu)
 
     def calc_pos_vel_linear(self, buf):
-        current_time = self.get_clock().now()
+        current_time = self.node.get_clock().now()
         delta_time = (current_time - self.previous_time).nanoseconds * 1e-9
         self.previous_time = current_time
 
@@ -297,8 +297,8 @@ class SensorService:
         self.position_y += self.velocity_y * delta_time + 0.5*(self.unpackBytesToFloat(buf[34], buf[35]) / self.param.acc_factor.value) * delta_time * delta_time
         self.position_z += self.velocity_z * delta_time + 0.5*(self.unpackBytesToFloat(buf[36], buf[37]) / self.param.acc_factor.value) * delta_time * delta_time
 
-        vector_position = Vector3(self.position_x, self.position_y, self.position_z)
-        linear_velocity = Vector3(self.velocity_x, self.velocity_y, self.velocity_z)
+        vector_position = Point(x=self.position_x, y=self.position_y, z=self.position_z)
+        linear_velocity = Vector3(x=self.velocity_x, y=self.velocity_y, z=self.velocity_z)
 
         return vector_position, linear_velocity
 
