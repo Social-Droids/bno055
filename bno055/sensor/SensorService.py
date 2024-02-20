@@ -89,6 +89,11 @@ class SensorService:
         self.position_filtered_y = msg.pose.pose.position.y
         self.position_filtered_z = msg.pose.pose.position.z
 
+        self.velocity_filtered_x = msg.twist.twist.linear.x
+        self.velocity_filtered_y = msg.twist.twist.linear.y
+        self.velocity_filtered_z = msg.twist.twist.linear.z
+
+
     def configure(self):
         """Configure the IMU sensor hardware."""
         self.node.get_logger().info('Configuring device...')
@@ -228,7 +233,7 @@ class SensorService:
         # normalize
         norm = sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w)
         imu_msg.orientation.x = 0.0 if abs(q.x / norm) < 3e-2 else q.x / norm
-        imu_msg.orientation.y = 0.0 if abs(q.y / norm) < 3e-2 else  q.y / norm
+        imu_msg.orientation.y = 0.0 if abs(q.y / norm) < 3e-2 else q.y / norm
         imu_msg.orientation.z = q.z / norm
         imu_msg.orientation.w = q.w / norm
 
@@ -293,27 +298,29 @@ class SensorService:
             self.unpackBytesToFloat(buf[14], buf[15]) / self.param.gyr_factor.value
         odometry_imu.twist.twist.angular.z = \
             self.unpackBytesToFloat(buf[16], buf[17]) / self.param.gyr_factor.value
-        vector_position, linear_velocity = self.calc_pos_vel_linear(buf)
+        vector_position, linear_velocity = self.calc_pos_vel_linear(buf, imu_msg)
         odometry_imu.twist.twist.linear = linear_velocity
         odometry_imu.pose.pose.position = vector_position
         self.pub_odom_imu.publish(odometry_imu)
 
-    def calc_pos_vel_linear(self, buf):
+    def calc_pos_vel_linear(self, buf, imu_msg):
         current_time = self.node.get_clock().now()
         delta_time = (current_time - self.previous_time).nanoseconds * 1e-9
         self.previous_time = current_time
 
-        self.velocity_x = self.velocity_filtered_x + (self.unpackBytesToFloat(buf[32], buf[33]) / self.param.acc_factor.value) * delta_time
-        self.velocity_y = self.velocity_filtered_y + (self.unpackBytesToFloat(buf[34], buf[35]) / self.param.acc_factor.value) * delta_time
-        self.velocity_z = self.velocity_filtered_z + (self.unpackBytesToFloat(buf[36], buf[37]) / self.param.acc_factor.value) * delta_time
+        self.velocity_x = self.velocity_filtered_x + (imu_msg.linear_acceleration.x) * delta_time
+        # self.velocity_y = self.velocity_y + (imu_msg.linear_acceleration.y) * delta_time
+        # self.velocity_z = self.velocity_z + (imu_msg.linear_acceleration.z) * delta_time
+        self.velocity_z = 0.0
+        # self.velocity_x = 0.1
+        self.velocity_y = 0.0
 
-        self.position_x = self.position_filtered_x + self.velocity_x * delta_time + 0.5*(self.unpackBytesToFloat(buf[32], buf[33]) / self.param.acc_factor.value) * delta_time * delta_time
-        self.position_y = self.position_filtered_y + self.velocity_y * delta_time + 0.5*(self.unpackBytesToFloat(buf[34], buf[35]) / self.param.acc_factor.value) * delta_time * delta_time
-        self.position_z = self.position_filtered_z + self.velocity_z * delta_time + 0.5*(self.unpackBytesToFloat(buf[36], buf[37]) / self.param.acc_factor.value) * delta_time * delta_time
-
+        self.position_x = self.position_x + self.velocity_x * delta_time + 0.5*(imu_msg.linear_acceleration.x) * delta_time * delta_time
+        self.position_y = self.position_y + self.velocity_y * delta_time + 0.5*(imu_msg.linear_acceleration.y) * delta_time * delta_time
+        # self.position_z = self.position_z + self.velocity_z * delta_time + 0.5*(imu_msg.linear_acceleration.z) * delta_time * delta_time
+        self.position_z = 0.0
         vector_position = Point(x=self.position_x, y=self.position_y, z=self.position_z)
         linear_velocity = Vector3(x=self.velocity_x, y=self.velocity_y, z=self.velocity_z)
-
         return vector_position, linear_velocity
 
     def get_calib_status(self):
