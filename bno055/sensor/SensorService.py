@@ -34,6 +34,7 @@ from time import sleep
 from bno055 import registers
 from bno055.connectors.Connector import Connector
 from bno055.params.NodeParameters import NodeParameters
+from bno055.error_handling.exceptions import TransmissionException
 
 from geometry_msgs.msg import Quaternion, Vector3
 from nav_msgs.msg import Odometry
@@ -78,32 +79,44 @@ class SensorService:
     def configure(self):
         """Configure the IMU sensor hardware."""
         self.node.get_logger().info('Configuring device...')
-        try:
-            data = self.con.receive(registers.BNO055_CHIP_ID_ADDR, 1)
-            if data[0] != registers.BNO055_ID:
-                raise IOError('Device ID=%s is incorrect' % data)
-            # print("device sent ", binascii.hexlify(data))
-        except Exception as e:  # noqa: B902
-            # This is the first communication - exit if it does not work
-            self.node.get_logger().error('Communication error: %s' % e)
-            self.node.get_logger().error('Shutting down ROS node...')
+        retries = 30
+        ok = True
+        while retries > 0:
+            try:
+                data = self.con.receive(registers.BNO055_CHIP_ID_ADDR, 1)
+                if data[0] != registers.BNO055_ID:
+                    raise IOError('Device ID=%s is incorrect' % data)
+                # print("device sent ", binascii.hexlify(data))
+            except Exception as e:  # noqa: B902
+                # This is the first communication - exit if it does not work
+                self.node.get_logger().error('Communication error: %s' % e)
+                retries -= 1
+                self.node.get_logger().warn(f'Retries left {retries}')
+
+        if retries < 0:
+            self.node.get_logger().fatal('Failed to configure BNO055! Shutting down ROS node...')
             sys.exit(1)
 
         # IMU connected => apply IMU Configuration:
         if not (self.con.transmit(registers.BNO055_OPR_MODE_ADDR, 1, bytes([registers.OPERATION_MODE_CONFIG]))):
             self.node.get_logger().warn('Unable to set IMU into config mode.')
+            ok = False
 
         if not (self.con.transmit(registers.BNO055_PWR_MODE_ADDR, 1, bytes([registers.POWER_MODE_NORMAL]))):
             self.node.get_logger().warn('Unable to set IMU normal power mode.')
+            ok = False
 
         if not (self.con.transmit(registers.BNO055_PAGE_ID_ADDR, 1, bytes([0x00]))):
             self.node.get_logger().warn('Unable to set IMU register page 0.')
+            ok = False
 
         if not (self.con.transmit(registers.BNO055_SYS_TRIGGER_ADDR, 1, bytes([0x00]))):
             self.node.get_logger().warn('Unable to start IMU.')
+            ok = False
 
         if not (self.con.transmit(registers.BNO055_UNIT_SEL_ADDR, 1, bytes([0x83]))):
             self.node.get_logger().warn('Unable to set IMU units.')
+            ok = False
 
         # The sensor placement configuration (Axis remapping) defines the
         # position and orientation of the sensor mount.
@@ -121,6 +134,7 @@ class SensorService:
         if not (self.con.transmit(registers.BNO055_AXIS_MAP_CONFIG_ADDR, 2,
                                   mount_positions[self.param.placement_axis_remap.value])):
             self.node.get_logger().warn('Unable to set sensor placement configuration.')
+            ok = False
 
         # Show the current sensor offsets
         self.node.get_logger().info('Current sensor offsets:')
@@ -138,6 +152,7 @@ class SensorService:
                 self.print_calib_data()
             else:
                 self.node.get_logger().warn('setting offsets failed')
+                ok = False
 
 
         # Set Device mode
@@ -146,21 +161,15 @@ class SensorService:
 
         if not (self.con.transmit(registers.BNO055_OPR_MODE_ADDR, 1, bytes([device_mode]))):
             self.node.get_logger().warn('Unable to set IMU operation mode into operation mode.')
+            ok = False
 
-        self.node.get_logger().info('Bosch BNO055 IMU configuration complete.')
+        if ok:
+            self.node.get_logger().info('Bosch BNO055 IMU configuration complete.')
+        else:
+            self.node.get_logger().error('Bosch BNO055 IMU configuration complete with errors.')
 
-    def get_sensor_data(self):
-        """Read IMU data from the sensor, parse and publish."""
-        # Initialize ROS msgs
+    def publish_imu_raw(self, buf):
         imu_raw_msg = Imu()
-        imu_msg = Imu()
-        mag_msg = MagneticField()
-        grav_msg = Vector3()
-        temp_msg = Temperature()
-        odometry_imu = Odometry()
-
-        # read from sensor
-        buf = self.con.receive(registers.BNO055_ACCEL_DATA_X_LSB_ADDR, 45)
         # Publish raw data
         imu_raw_msg.header.stamp = self.node.get_clock().now().to_msg()
         imu_raw_msg.header.frame_id = self.param.frame_id.value
@@ -199,7 +208,8 @@ class SensorService:
         # node.get_logger().info('Publishing imu message')
         self.pub_imu_raw.publish(imu_raw_msg)
 
-        # TODO: make this an option to publish?
+    def publish_imu(self, buf):
+        imu_msg = Imu()
         # Publish filtered data
         imu_msg.header.stamp = self.node.get_clock().now().to_msg()
         imu_msg.header.frame_id = self.param.frame_id.value
@@ -218,7 +228,11 @@ class SensorService:
         imu_msg.orientation.z = q.z / norm
         imu_msg.orientation.w = q.w / norm
 
-        imu_msg.orientation_covariance = imu_raw_msg.orientation_covariance
+        imu_msg.orientation_covariance = [
+            self.param.variance_orientation.value[0], 0.0, 0.0,
+            0.0, self.param.variance_orientation.value[1], 0.0,
+            0.0, 0.0, self.param.variance_orientation.value[2]
+        ]
 
         imu_msg.linear_acceleration.x = \
             self.unpackBytesToFloat(buf[32], buf[33]) / self.param.acc_factor.value
@@ -226,15 +240,28 @@ class SensorService:
             self.unpackBytesToFloat(buf[34], buf[35]) / self.param.acc_factor.value
         imu_msg.linear_acceleration.z = \
             self.unpackBytesToFloat(buf[36], buf[37]) / self.param.acc_factor.value
-        imu_msg.linear_acceleration_covariance = imu_raw_msg.linear_acceleration_covariance
+        imu_msg.linear_acceleration_covariance = [
+            self.param.variance_acc.value[0], 0.0, 0.0,
+            0.0, self.param.variance_acc.value[1], 0.0,
+            0.0, 0.0, self.param.variance_acc.value[2]
+        ]
+
         imu_msg.angular_velocity.x = \
             self.unpackBytesToFloat(buf[12], buf[13]) / self.param.gyr_factor.value
         imu_msg.angular_velocity.y = \
             self.unpackBytesToFloat(buf[14], buf[15]) / self.param.gyr_factor.value
         imu_msg.angular_velocity.z = \
             self.unpackBytesToFloat(buf[16], buf[17]) / self.param.gyr_factor.value
-        imu_msg.angular_velocity_covariance = imu_raw_msg.angular_velocity_covariance
+        imu_msg.angular_velocity_covariance = [
+            self.param.variance_angular_vel.value[0], 0.0, 0.0,
+            0.0, self.param.variance_angular_vel.value[1], 0.0,
+            0.0, 0.0, self.param.variance_angular_vel.value[2]
+        ]
+
         self.pub_imu.publish(imu_msg)
+
+    def publish_magnetometer(self, buf):
+        mag_msg = MagneticField()
 
         # Publish magnetometer data
         mag_msg.header.stamp = self.node.get_clock().now().to_msg()
@@ -253,6 +280,8 @@ class SensorService:
         ]
         self.pub_mag.publish(mag_msg)
 
+    def publish_gravity(self, buf):
+        grav_msg = Vector3()
         grav_msg.x = \
             self.unpackBytesToFloat(buf[38], buf[39]) / self.param.grav_factor.value
         grav_msg.y = \
@@ -261,6 +290,8 @@ class SensorService:
             self.unpackBytesToFloat(buf[42], buf[43]) / self.param.grav_factor.value
         self.pub_grav.publish(grav_msg)
 
+    def publish_temperature(self, buf):
+        temp_msg = Temperature()
         # Publish temperature
         temp_msg.header.stamp = self.node.get_clock().now().to_msg()
         temp_msg.header.frame_id = self.param.frame_id.value
@@ -268,11 +299,28 @@ class SensorService:
         temp_msg.temperature = float(buf[44])
         self.pub_temp.publish(temp_msg)
 
+    def publish_odometry(self, buf):
+        odometry_imu = Odometry()
+
+        q = Quaternion()
+        # imu_msg.header.seq = seq
+        q.w = self.unpackBytesToFloat(buf[24], buf[25])
+        q.x = self.unpackBytesToFloat(buf[26], buf[27])
+        q.y = self.unpackBytesToFloat(buf[28], buf[29])
+        q.z = self.unpackBytesToFloat(buf[30], buf[31])
+        # TODO(flynneva): replace with standard normalize() function
+        # normalize
+        norm = sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w)
+
         # Publish odom data
         odometry_imu.header.stamp = self.node.get_clock().now().to_msg()
         odometry_imu.header.frame_id = 'odom'
         odometry_imu.child_frame_id = 'base_footprint'
-        odometry_imu.pose.pose.orientation = Quaternion(x = q.x / norm, y = q.y / norm, z = q.z / norm, w = q.w / norm)
+        odometry_imu.pose.pose.orientation = Quaternion(x=q.x / norm,
+                                                        y=q.y / norm,
+                                                        z=q.z / norm,
+                                                        w=q.w / norm)
+
         odometry_imu.twist.twist.angular.x = \
             self.unpackBytesToFloat(buf[12], buf[13]) / self.param.gyr_factor.value
         odometry_imu.twist.twist.angular.y = \
@@ -283,6 +331,20 @@ class SensorService:
         odometry_imu.twist.twist.linear = linear_velocity
         odometry_imu.pose.pose.position = vector_position
         self.pub_odom_imu(odometry_imu)
+
+    def get_sensor_data(self):
+        """Read IMU data from the sensor, parse and publish."""
+        # read from sensor
+        try:
+            buf = self.con.receive(registers.BNO055_ACCEL_DATA_X_LSB_ADDR, 45)
+            self.publish_imu_raw(buf)
+            self.publish_imu(buf)
+            self.publish_magnetometer(buf)
+            self.publish_gravity(buf)
+            self.publish_temperature(buf)
+            self.publish_odometry(buf)
+        except TransmissionException as e:
+            self.node.get_logger().warn(f'Failed to read data from BNO055! {e}')
 
     def calc_pos_vel_linear(self, buf):
         current_time = self.get_clock().now()

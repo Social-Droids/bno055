@@ -74,13 +74,21 @@ class Bno055Node(Node):
                                       + str(self.param.connection_type.value))
 
         # Connect to BNO055 device:
-        connector.connect()
+        connect_retry = 10
+        while not connector.connect() and connect_retry > 0:
+            connect_retry -= 1
+            self.get_logger().warn(f'Retrying connection to IMU. Retries left {connect_retry}')
+        if connect_retry < 0:
+            self.get_logger().fatal('Unable to connect to IMU!')
 
         # Instantiate the sensor Service API:
         self.sensor = SensorService(self, connector, self.param)
 
         # configure imu
-        self.sensor.configure()
+        try:
+            self.sensor.configure()
+        except IOError as e:
+            self.get_logger().fatal(f' Configuring BNO055 failed! {e}')
 
 
 def main(args=None):
