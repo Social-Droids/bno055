@@ -27,8 +27,9 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 
-
 from rclpy.node import Node
+import sys
+from time import sleep
 
 
 class Connector:
@@ -42,7 +43,31 @@ class Connector:
         self.node = node
 
     def receive(self, reg_addr, length):
-        return self.read(reg_addr, length)
+        data = None
+        retries = 5
+
+        while retries > 0:
+            try:
+                data = self.read(reg_addr, length)
+                if retries != 5:
+                    self.node.get_logger().info(f'Receive data OK after {5 - retries} retries!')
+                break
+            except Exception as e:
+                self.node.get_logger().error('Communication error: %s' % e)
+                retries -= 1
+                self.node.get_logger().warn(f'Retries left {retries}')
+                sleep(0.025)
+                # raise e
+        # if retries < 0:
+        #     self.node.get_logger().fatal('Failed to Receive Data! Shutting down ROS node...')
+        #     sys.exit(1)
+        if data is None:
+            while not self.connect():
+                self.node.get_logger().warn('Resetting Connection!')
+                sleep(0.05)
+
+            self.node.get_logger().warn('Connection OK!')
+        return data
 
     def transmit(self, reg_addr, length, data: bytes):
         return self.write(reg_addr, length, data)

@@ -36,7 +36,7 @@ from bno055.connectors.Connector import Connector
 from bno055.params.NodeParameters import NodeParameters
 from bno055.error_handling.exceptions import TransmissionException
 
-from geometry_msgs.msg import Quaternion, Vector3
+from geometry_msgs.msg import Quaternion, Vector3, Point
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
@@ -53,7 +53,7 @@ class SensorService:
         self.con = connector
         self.param = param
 
-        self.previous_time = self.get_clock().now()
+        self.previous_time = self.node.get_clock().now()
 
         prefix = self.param.ros_topic_prefix.value
         QoSProf = QoSProfile(depth=10)
@@ -79,23 +79,11 @@ class SensorService:
     def configure(self):
         """Configure the IMU sensor hardware."""
         self.node.get_logger().info('Configuring device...')
-        retries = 30
-        ok = True
-        while retries > 0:
-            try:
-                data = self.con.receive(registers.BNO055_CHIP_ID_ADDR, 1)
-                if data[0] != registers.BNO055_ID:
-                    raise IOError('Device ID=%s is incorrect' % data)
-                # print("device sent ", binascii.hexlify(data))
-            except Exception as e:  # noqa: B902
-                # This is the first communication - exit if it does not work
-                self.node.get_logger().error('Communication error: %s' % e)
-                retries -= 1
-                self.node.get_logger().warn(f'Retries left {retries}')
+        data = self.con.receive(registers.BNO055_CHIP_ID_ADDR, 1)
 
-        if retries < 0:
-            self.node.get_logger().fatal('Failed to configure BNO055! Shutting down ROS node...')
-            sys.exit(1)
+        if data is not None and data[0] != registers.BNO055_ID:
+            raise IOError('Device ID=%s is incorrect' % data)
+        ok = True
 
         # IMU connected => apply IMU Configuration:
         if not (self.con.transmit(registers.BNO055_OPR_MODE_ADDR, 1, bytes([registers.OPERATION_MODE_CONFIG]))):
@@ -206,6 +194,11 @@ class SensorService:
             0.0, 0.0, self.param.variance_angular_vel.value[2]
         ]
         # node.get_logger().info('Publishing imu message')
+        if imu_raw_msg.linear_acceleration.x + \
+           imu_raw_msg.linear_acceleration.y + \
+           imu_raw_msg.linear_acceleration.z == 0.0:
+            self.configure()
+
         self.pub_imu_raw.publish(imu_raw_msg)
 
     def publish_imu(self, buf):
@@ -330,24 +323,29 @@ class SensorService:
         vector_position, linear_velocity = self.calc_pos_vel_linear(buf)
         odometry_imu.twist.twist.linear = linear_velocity
         odometry_imu.pose.pose.position = vector_position
-        self.pub_odom_imu(odometry_imu)
+        self.pub_odom_imu.publish(odometry_imu)
 
-    def get_sensor_data(self):
+    def get_sensor_data(self) -> bool:
         """Read IMU data from the sensor, parse and publish."""
         # read from sensor
         try:
             buf = self.con.receive(registers.BNO055_ACCEL_DATA_X_LSB_ADDR, 45)
-            self.publish_imu_raw(buf)
-            self.publish_imu(buf)
-            self.publish_magnetometer(buf)
-            self.publish_gravity(buf)
-            self.publish_temperature(buf)
-            self.publish_odometry(buf)
+            if buf is not None:
+                self.publish_imu_raw(buf)
+                self.publish_imu(buf)
+                self.publish_magnetometer(buf)
+                self.publish_gravity(buf)
+                self.publish_temperature(buf)
+                self.publish_odometry(buf)
+                return True
+            else:
+                self.node.get_logger().info('None buffer')
         except TransmissionException as e:
             self.node.get_logger().warn(f'Failed to read data from BNO055! {e}')
+        return False
 
     def calc_pos_vel_linear(self, buf):
-        current_time = self.get_clock().now()
+        current_time = self.node.get_clock().now()
         delta_time = (current_time - self.previous_time).nanoseconds * 1e-9
         self.previous_time = current_time
 
@@ -359,8 +357,16 @@ class SensorService:
         self.position_y += self.velocity_y * delta_time + 0.5*(self.unpackBytesToFloat(buf[34], buf[35]) / self.param.acc_factor.value) * delta_time * delta_time
         self.position_z += self.velocity_z * delta_time + 0.5*(self.unpackBytesToFloat(buf[36], buf[37]) / self.param.acc_factor.value) * delta_time * delta_time
 
-        vector_position = Vector3(self.position_x, self.position_y, self.position_z)
-        linear_velocity = Vector3(self.velocity_x, self.velocity_y, self.velocity_z)
+        vector_position = Point()
+        linear_velocity = Vector3()
+
+        vector_position.x = self.position_x
+        vector_position.y = self.position_y
+        vector_position.z = self.position_z
+
+        linear_velocity.x = self.velocity_x
+        linear_velocity.y = self.velocity_y
+        linear_velocity.z = self.velocity_z
 
         return vector_position, linear_velocity
 
@@ -371,13 +377,15 @@ class SensorService:
         Quality scale: 0 = bad, 3 = best
         """
         calib_status = self.con.receive(registers.BNO055_CALIB_STAT_ADDR, 1)
-        sys = (calib_status[0] >> 6) & 0x03
+
+        sys_status = (calib_status[0] >> 6) & 0x03
         gyro = (calib_status[0] >> 4) & 0x03
         accel = (calib_status[0] >> 2) & 0x03
         mag = calib_status[0] & 0x03
 
         # Create dictionary (map) and convert it to JSON string:
-        calib_status_dict = {'sys': sys, 'gyro': gyro, 'accel': accel, 'mag': mag}
+        calib_status_dict = {'sys': sys_status, 'gyro': gyro, 'accel': accel,
+                             'mag': mag}
         calib_status_str = String()
         calib_status_str.data = json.dumps(calib_status_dict)
 

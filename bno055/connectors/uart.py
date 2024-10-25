@@ -75,6 +75,9 @@ class UART(Connector):
             self.node.get_logger().info('Unable to connect to IMU at port ' + self.port)
             self.node.get_logger().info('Check to make sure your device is connected')
             return False
+        except Exception as e:
+            self.node.get_logger().warn(f'Exception: {e}')
+            return False
 
     def read(self, reg_addr, length):
         """Read data from sensor via UART.

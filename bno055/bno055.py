@@ -113,10 +113,15 @@ def main(args=None):
                 return
 
             # Acquire lock before entering critical area to prevent overlapping data queries
-            lock.acquire()
+            if not lock.acquire():
+                node.get_logger().info('Failed to acquire lock!')
+
             try:
                 # perform synchronized block:
-                node.sensor.get_sensor_data()
+                if not node.sensor.get_sensor_data():
+                    node.get_logger().info('Hot configuring IMU!')
+                    node.sensor.configure()
+
             except BusOverRunException:
                 # data not available yet, wait for next cycle | see #5
                 return
@@ -143,6 +148,7 @@ def main(args=None):
             try:
                 # perform synchronized block:
                 node.sensor.get_calib_status()
+                node.get_logger().info('Read Calibration Status OK!')
             except Exception as e:  # noqa: B902
                 node.get_logger().warn('Receiving calibration status failed with %s:"%s"'
                                        % (type(e).__name__, e))
