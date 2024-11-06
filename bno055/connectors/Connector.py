@@ -50,12 +50,12 @@ class Connector:
             try:
                 data = self.read(reg_addr, length)
                 if retries != 5:
-                    self.node.get_logger().info(f'Receive data OK after {5 - retries} retries!')
+                    self.node.get_logger().debug(f'Receive data OK after {5 - retries} retries!')
                 break
             except Exception as e:
-                self.node.get_logger().error('Communication error: %s' % e)
+                self.node.get_logger().debug('Communication error: %s' % e)
                 retries -= 1
-                self.node.get_logger().warn(f'Retries left {retries}')
+                self.node.get_logger().debug(f'Retries left {retries}')
                 sleep(0.025)
                 # raise e
         # if retries < 0:

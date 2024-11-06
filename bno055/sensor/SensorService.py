@@ -378,52 +378,69 @@ class SensorService:
         """
         calib_status = self.con.receive(registers.BNO055_CALIB_STAT_ADDR, 1)
 
-        sys_status = (calib_status[0] >> 6) & 0x03
-        gyro = (calib_status[0] >> 4) & 0x03
-        accel = (calib_status[0] >> 2) & 0x03
-        mag = calib_status[0] & 0x03
+        if calib_status is not None:
+            sys_status = (calib_status[0] >> 6) & 0x03
+            gyro = (calib_status[0] >> 4) & 0x03
+            accel = (calib_status[0] >> 2) & 0x03
+            mag = calib_status[0] & 0x03
 
-        # Create dictionary (map) and convert it to JSON string:
-        calib_status_dict = {'sys': sys_status, 'gyro': gyro, 'accel': accel,
-                             'mag': mag}
-        calib_status_str = String()
-        calib_status_str.data = json.dumps(calib_status_dict)
+            # Create dictionary (map) and convert it to JSON string:
+            calib_status_dict = {'sys': sys_status, 'gyro': gyro, 'accel': accel,
+                                'mag': mag}
+            calib_status_str = String()
+            calib_status_str.data = json.dumps(calib_status_dict)
 
-        # Publish via ROS topic:
-        self.pub_calib_status.publish(calib_status_str)
+            # Publish via ROS topic:
+            self.pub_calib_status.publish(calib_status_str)
 
     def get_calib_data(self):
         """Read all calibration data."""
+        accel_offset_read_x  = 0
+        accel_offset_read_y  = 0
+        accel_offset_read_z  = 0
+        accel_radius_read_value = 0
+        mag_offset_read_x = 0
+        mag_offset_read_y = 0
+        mag_offset_read_z = 0
+        mag_radius_read_value = 0
+        gyro_offset_read_x = 0
+        gyro_offset_read_y = 0
+        gyro_offset_read_z = 0
 
         accel_offset_read = self.con.receive(registers.ACCEL_OFFSET_X_LSB_ADDR, 6)
-        accel_offset_read_x = (accel_offset_read[1] << 8) | accel_offset_read[
-            0]  # Combine MSB and LSB registers into one decimal
-        accel_offset_read_y = (accel_offset_read[3] << 8) | accel_offset_read[
-            2]  # Combine MSB and LSB registers into one decimal
-        accel_offset_read_z = (accel_offset_read[5] << 8) | accel_offset_read[
-            4]  # Combine MSB and LSB registers into one decimal
+        if accel_offset_read is not None:
+            accel_offset_read_x = (accel_offset_read[1] << 8) | accel_offset_read[
+                0]  # Combine MSB and LSB registers into one decimal
+            accel_offset_read_y = (accel_offset_read[3] << 8) | accel_offset_read[
+                2]  # Combine MSB and LSB registers into one decimal
+            accel_offset_read_z = (accel_offset_read[5] << 8) | accel_offset_read[
+                4]  # Combine MSB and LSB registers into one decimal
 
         accel_radius_read = self.con.receive(registers.ACCEL_RADIUS_LSB_ADDR, 2)
-        accel_radius_read_value = (accel_radius_read[1] << 8) | accel_radius_read[0]
+        if accel_radius_read is not None:
+            accel_radius_read_value = (accel_radius_read[1] << 8) | accel_radius_read[0]
 
         mag_offset_read = self.con.receive(registers.MAG_OFFSET_X_LSB_ADDR, 6)
-        mag_offset_read_x = (mag_offset_read[1] << 8) | mag_offset_read[
-            0]  # Combine MSB and LSB registers into one decimal
-        mag_offset_read_y = (mag_offset_read[3] << 8) | mag_offset_read[
-            2]  # Combine MSB and LSB registers into one decimal
-        mag_offset_read_z = (mag_offset_read[5] << 8) | mag_offset_read[
-            4]  # Combine MSB and LSB registers into one decimal
+        if mag_offset_read is not None:
+            mag_offset_read_x = (mag_offset_read[1] << 8) | mag_offset_read[
+                0]  # Combine MSB and LSB registers into one decimal
+            mag_offset_read_y = (mag_offset_read[3] << 8) | mag_offset_read[
+                2]  # Combine MSB and LSB registers into one decimal
+            mag_offset_read_z = (mag_offset_read[5] << 8) | mag_offset_read[
+                4]  # Combine MSB and LSB registers into one decimal
 
         mag_radius_read = self.con.receive(registers.MAG_RADIUS_LSB_ADDR, 2)
-        mag_radius_read_value = (mag_radius_read[1] << 8) | mag_radius_read[0]
+        if mag_radius_read is not None:
+            mag_radius_read_value = (mag_radius_read[1] << 8) | mag_radius_read[0]
 
         gyro_offset_read = self.con.receive(registers.GYRO_OFFSET_X_LSB_ADDR, 6)
-        gyro_offset_read_x = (gyro_offset_read[1] << 8) | gyro_offset_read[
-            0]  # Combine MSB and LSB registers into one decimal
-        gyro_offset_read_y = (gyro_offset_read[3] << 8) | gyro_offset_read[
-            2]  # Combine MSB and LSB registers into one decimal
-        gyro_offset_read_z = (gyro_offset_read[5] << 8) | gyro_offset_read[
-            4]  # Combine MSB and LSB registers into one decimal
+        if gyro_offset_read is not None:
+            gyro_offset_read_x = (gyro_offset_read[1] << 8) | gyro_offset_read[
+                0]  # Combine MSB and LSB registers into one decimal
+            gyro_offset_read_y = (gyro_offset_read[3] << 8) | gyro_offset_read[
+                2]  # Combine MSB and LSB registers into one decimal
+            gyro_offset_read_z = (gyro_offset_read[5] << 8) | gyro_offset_read[
+                4]  # Combine MSB and LSB registers into one decimal
 
         calib_data = {'accel_offset': {'x': accel_offset_read_x, 'y': accel_offset_read_y, 'z': accel_offset_read_z}, 'accel_radius': accel_radius_read_value,
                       'mag_offset': {'x': mag_offset_read_x, 'y': mag_offset_read_y, 'z': mag_offset_read_z}, 'mag_radius': mag_radius_read_value,
