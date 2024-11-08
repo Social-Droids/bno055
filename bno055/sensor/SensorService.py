@@ -34,7 +34,8 @@ from time import sleep
 from bno055 import registers
 from bno055.connectors.Connector import Connector
 from bno055.params.NodeParameters import NodeParameters
-from bno055.error_handling.exceptions import TransmissionException
+from bno055.error_handling.exceptions import TransmissionException, \
+                                                InvalidReading
 
 from geometry_msgs.msg import Quaternion, Vector3, Point
 from nav_msgs.msg import Odometry
@@ -197,7 +198,8 @@ class SensorService:
         if imu_raw_msg.linear_acceleration.x + \
            imu_raw_msg.linear_acceleration.y + \
            imu_raw_msg.linear_acceleration.z == 0.0:
-            self.configure()
+            self.node.get_logger().info('Receiving null data')
+            raise InvalidReading(f'Data = {buf}')
 
         self.pub_imu_raw.publish(imu_raw_msg)
 
@@ -328,20 +330,15 @@ class SensorService:
     def get_sensor_data(self) -> bool:
         """Read IMU data from the sensor, parse and publish."""
         # read from sensor
-        try:
-            buf = self.con.receive(registers.BNO055_ACCEL_DATA_X_LSB_ADDR, 45)
-            if buf is not None:
-                self.publish_imu_raw(buf)
-                self.publish_imu(buf)
-                self.publish_magnetometer(buf)
-                self.publish_gravity(buf)
-                self.publish_temperature(buf)
-                self.publish_odometry(buf)
-                return True
-            else:
-                self.node.get_logger().info('None buffer')
-        except TransmissionException as e:
-            self.node.get_logger().warn(f'Failed to read data from BNO055! {e}')
+        buf = self.con.receive(registers.BNO055_ACCEL_DATA_X_LSB_ADDR, 45)
+        if buf is not None:
+            self.publish_imu_raw(buf)
+            self.publish_imu(buf)
+            self.publish_magnetometer(buf)
+            self.publish_gravity(buf)
+            self.publish_temperature(buf)
+            self.publish_odometry(buf)
+            return True
         return False
 
     def calc_pos_vel_linear(self, buf):
@@ -395,9 +392,9 @@ class SensorService:
 
     def get_calib_data(self):
         """Read all calibration data."""
-        accel_offset_read_x  = 0
-        accel_offset_read_y  = 0
-        accel_offset_read_z  = 0
+        accel_offset_read_x = 0
+        accel_offset_read_y = 0
+        accel_offset_read_z = 0
         accel_radius_read_value = 0
         mag_offset_read_x = 0
         mag_offset_read_y = 0

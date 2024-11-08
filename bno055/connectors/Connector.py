@@ -30,6 +30,7 @@
 from rclpy.node import Node
 import sys
 from time import sleep
+from bno055.error_handling.exceptions import TransmissionException
 
 
 class Connector:
@@ -50,23 +51,29 @@ class Connector:
             try:
                 data = self.read(reg_addr, length)
                 if retries != 5:
-                    self.node.get_logger().debug(f'Receive data OK after {5 - retries} retries!')
+                    self.node.get_logger().info(f'Receive data OK after {5 - retries} retries!')
                 break
             except Exception as e:
-                self.node.get_logger().debug('Communication error: %s' % e)
+                self.node.get_logger().info('Communication error: %s' % e)
                 retries -= 1
-                self.node.get_logger().debug(f'Retries left {retries}')
+                self.node.get_logger().info(f'Retries left {retries}')
                 sleep(0.025)
                 # raise e
         # if retries < 0:
         #     self.node.get_logger().fatal('Failed to Receive Data! Shutting down ROS node...')
         #     sys.exit(1)
         if data is None:
-            while not self.connect():
+            retries = 5
+            while not self.connect() and retries > 0:
                 self.node.get_logger().warn('Resetting Connection!')
-                sleep(0.05)
+                retries -= 1
+                sleep(0.2)
+            if retries <= 0:
+                raise TransmissionException('Failed to connect to the IMU')
 
-            self.node.get_logger().warn('Connection OK!')
+            self.node.get_logger().info('Connection OK!')
+        if data is None:
+            raise TransmissionException('Failed to receive data')
         return data
 
     def transmit(self, reg_addr, length, data: bytes):

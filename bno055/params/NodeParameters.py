@@ -100,6 +100,8 @@ class NodeParameters:
         node.declare_parameter('variance_angular_vel', value=registers.DEFAULT_VARIANCE_ANGULAR_VEL)
         node.declare_parameter('variance_orientation', value=registers.DEFAULT_VARIANCE_ORIENTATION)
         node.declare_parameter('variance_mag', value=registers.DEFAULT_VARIANCE_MAG)
+        # Max failed packets before the node dies and respawns
+        node.declare_parameter('max_lifetime', value=20)
 
         # get the parameters - requires CLI arguments '--ros-args --params-file <parameter file>'
         node.get_logger().info('Parameters set to:')
@@ -186,6 +188,9 @@ class NodeParameters:
             node.get_logger().info('\tvariance_orientation:\t"%s"' % self.variance_orientation.value)
             self.variance_mag = node.get_parameter('variance_mag')
             node.get_logger().info('\tvariance_mag:\t\t"%s"' % self.variance_mag.value)
+
+            self.max_lifetime = node.get_parameter('max_lifetime')
+            node.get_logger().info('\tmax_lifetime:\t\t"%s"' % self.max_lifetime.value)
         except Exception as e:  # noqa: B902
             node.get_logger().warn('Could not get parameters...setting variables to default')
             node.get_logger().warn('Error: "%s"' % e)

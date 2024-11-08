@@ -102,7 +102,6 @@ class UART(Connector):
         if buf_in.__len__() < 2:
             raise TransmissionException('Unexpected length of READ-request response: %s'
                                         % buf_in.__len__())
-
         
         # Check for READ result (success or failure):
         if buf_in[0] == registers.COM_START_BYTE_ERROR_RESP:

@@ -43,3 +43,11 @@ class BusOverRunException(TransmissionException):
     """
 
     pass
+
+
+class InvalidReading(Exception):
+    """
+    Exception thrown when BNO055 sensor raw data returns 0.0 (impossible).
+
+    """
+    pass
